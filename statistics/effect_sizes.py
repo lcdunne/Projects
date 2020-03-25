@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Mar 23 21:14:52 2020
-
+Created on Tue Mar 24 18:39:58 2020
 @author: L
-
-TODO: AnovaRM needs to output SSeffect and SSerror for each factor
 """
+
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
@@ -13,142 +11,149 @@ from statsmodels.stats.anova import AnovaRM
 from statsmodels.formula.api import ols
 from scipy.stats import norm
 
-#~Testing Dataset~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-# Artificial movie ratings dataset
-movie_1 = [9, 7, 8, 9, 8, 9, 9, 10, 9, 9]
-movie_2 = [9, 6, 7, 8, 7, 9, 8, 8, 8, 7]
-df = pd.DataFrame({'movie_1': movie_1,
-                   'movie_2': movie_2})
-df['difference'] = df['movie_1'] - df['movie_2']
-print(df)
+'''
+Hedge's g involves much of the same computation as cohen's d, and even uses
+Cohen's d in its calculation...
+    Separate the function into two with repetitive code?
+    Calculate both in a more vague function?
+'''
 
-# Useful for testing functions
-a, b = movie_1, movie_2
-na, nb = np.size(a), np.size(b)
+# def _effect_size_ind() <-- to be used in ttest_ind()?
 
-#~Scenario 1: Independent Groups ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-t, p, dof = sm.stats.ttest_ind(movie_1, movie_2)
-print(f"t({dof}) = {t:.2f}")
+def standardised_cohens_d_hedges_g(x1=None, x2=None, t=None, nobs_x1=None, nobs_x2=None, N=None):
+    '''
+    Computes the standardised Cohen's d effect size statistic for independent samples
+    using the pooled standard deviation.
+    
+    Cliff delta would be the alternative for nonparametric
+    Parameters
+    ----------
+    x1 : array-like, optional
+        first of the two independent samples. The default is None.
+    x2 : array-like, optional
+        second of the two independent samples. The default is None.
+    tstat : scalar, optional
+        t-statistic result from independent t-test. The default is None.
+    nobs_x1 : scalar, optional
+        number of observations for the first of the two independent samples. The default is None.
+    nobs_x2 : scalar, optional
+        number of observations for the second of the two independent samples. The default is None.
+    N : scalar, optional
+        total N (sum of both independent samples). 
+        Note that if only `tstat` and `N` are provided, the standardised 
+        Cohen's d is an approximate. The default is None.
+    Raises
+    ------
+    ValueError
+        When x1 and x2 are None, if any of the following are true:
+            t == None
+            (nobs_x1 == None) and (nobs_x2 == None) and (N == None)
+    Returns
+    -------
+    cohens_d : float
+        Standardised Cohen's d statistic.
+    '''
+    # if x1 and x2 are provided - compute d from this.
+    if (x1 and x2):
+        x1, x2 = np.array(x1), np.array(x2) # Ensure np.array
+        nobs_x1, nobs_x2 = len(x1), len(x2)
+        S_x1, S_x2 = np.std(x1, ddof=1), np.std(x2, ddof=1)
+        dof = nobs_x1 + nobs_x2 - 2 # compute degree of freedom
+        meandiff = np.mean(x1) - np.mean(x2)
+        pooled_sd = np.sqrt( ((nobs_x1 - 1) * S_x1 ** 2 + (nobs_x2 - 1) * S_x2 ** 2) / dof )
+        cohens_d = meandiff / pooled_sd
+        hedges_g = cohens_d * (1 - (3 / (4 * (nobs_x1 + nobs_x2) - 9)))
+        
+    elif (not x1 and not x2):
+        # neither were given, so can we calculate from t and n obs?
+        if t==None:
+            raise ValueError("If `x1` and `x2` are not provided, `t` is needed to compute Cohen's d but was not provided.")
+        else:
+            # We have the t value
+            # Do we have both observation counts?
+            if not nobs_x1 and not nobs_x2:
+                if not N:
+                    raise ValueError("Either `N` or both of `nobs_x1` & `nobs_x2` is required but was not provided.")
+                else:
+                    # Estimating
+                    cohens_d = 2 * t / np.sqrt(N)
+                    hedges_g = cohens_d * (1 - (3 / (4 * N - 9)))
+            else:
+                # We have both n obs
+                cohens_d = t * np.sqrt( (1 / nobs_x1) + (1 / nobs_x2) )
+                hedges_g = cohens_d * (1 - (3 / (4 * (nobs_x1 + nobs_x2) - 9)))
+        
+    return cohens_d, hedges_g
 
-# Standardised Cohen's d with the pooled s
-
-
-def standardised_cohens_d(a, b):
-    na, nb = np.size(a), np.size(b)  # Get the n
-    mean_a, mean_b = np.mean(a), np.mean(b)  # get the means
-    Sa, Sb = np.std(a, ddof=1), np.std(b, ddof=1)  # Get the sample S
-    numerator = mean_a - mean_b
-    denominator = np.sqrt(((na - 1) * Sa**2 + (nb - 1) * Sb**2) / (na + nb - 2))
-
-    return numerator / denominator
-
-
-# Sample-based estimate: not recommended for meta-analytic work because biased by sample averages
-d_s = standardised_cohens_d(movie_1, movie_2)
-print(f"Standardised cohen's d: {d_s:.2f}")
-
-
-# Useful in later meta-analytic work
-def standardised_hedges_g(a, b):
-    # ***Hedge's g(s) depends on cohen's d(s) but overcomes the bias
-    # Small difference but apparently preferable.
-    d_s = standardised_cohens_d(a, b)
-    na, nb = np.size(a), np.size(b)
-    return d_s * (1 - (3 / (4 * (na + nb) - 9)))
-
-
-hg_s = standardised_hedges_g(a, b)
-print(f"Hedge's g: {hg_s:.2f}")
-
-
-# Extra: "Common language" effect size (CLES)
-# Probability that person from a will have a higher est. than person from b (or equv for within-subjs)
-def common_language_effect(a, b=None):
-    if b == None:
-        # We assume related samples and that a represents the difference values
-        # McGraw & Wong (1992)
-        Z = np.mean(a) / np.std(a, ddof=1)
+def common_language_effect_size(x1=None, x2=None):
+    '''
+    Common language effect size McGraw & Wong (1992) reflects the probability 
+    that a randomly sampled observation from one sample will have a higher 
+    observed measurement than a randomly sampled observation from the other 
+    sample, either between or within.
+    Parameters
+    ----------
+    x1 : array-like, optional
+        first of the two independent samples. If `x2` not specified, `x1` is 
+        inferred to be a vector representing the difference between the two 
+        samples. The default is None.
+    x2 : array-like, optional
+        second of the two independent samples. The default is None.
+    Raises
+    ------
+    ValueError
+        When no inputs are given.
+    Returns
+    -------
+    CLES : float
+        The common language effect size.
+    '''
+    if (x1==None and x2 == None):
+        raise ValueError("Requires `x1` and `x2`, or difference between them as `x1`, but nothing was provided.")
+    elif x2 == None:
+        # We assume related samples and that x1 represents the difference values
+        Z = np.mean(x1) / np.std(x1, ddof=1)
     else:
-        d_s = standardised_cohens_d(a, b)
-        Z = d_s / np.sqrt(2)
+        cohens_d, _ = standardised_cohens_d_hedges_g(x1, x2)
+        Z = cohens_d / np.sqrt(2)
+        
     CLES = norm.cdf(Z)
     return CLES
 
+#~Testing Dataset ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+# Artificial movie ratings dataset
+x1 = [9, 7, 8, 9, 8, 9, 9, 10, 9, 9]
+x2 = [9, 6, 7, 8, 7, 9, 8, 8, 8, 7]
+df = pd.DataFrame({'movie_1': x1,
+                   'movie_2': x2})
+df['difference'] = df['movie_1'] - df['movie_2']
+dfs = df[['movie_1', 'movie_2']].stack().reset_index()
+print(df, '\n')
 
-cles = common_language_effect(a, b)
-print(f"Common language effect size: {cles:.2f}")
-
-
-#~Scenario 2: Within-subjects design ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-from statsmodels.stats import weightstats as sms
-
-corrcoef = np.corrcoef(a, b)
-r = corrcoef[0][1]
-print(f"Strong correlation within-subs: {r:.2f}")
-
-# Strong correlation means small standard dev for difference scores
-d = sms.DescrStatsW(np.array(a) - np.array(b))
-t2, p2, dof2 = d.ttest_mean()
-print(f"t({dof2:.2f}) = {t2:.2f}, p = {p2:.2f}")
+nobs_x1, nobs_x2 = np.size(x1), np.size(x2)
 
 
-def cohens_d_of_diff(a, b, alt=True):
-    if alt == False:
-        # Rarely used in meta analysis, because in those cases we compare both within and between designs
-        # This only allows within.
-        d_z = np.mean(np.array(a) - np.array(b)) / np.std(np.array(a) - np.array(b), ddof=2)
-    else:
-        # Correction to enable comparison of d across within and between designs
-        d_z = (np.mean(a) - np.mean(b)) / np.sqrt((np.std(a, ddof=1)**2 + np.std(b, ddof=1)**2) - (2 * r * np.std(a, ddof=1) * np.std(b, ddof=1)))  # * np.sqrt(2 * (1 - r))
-    return d_z
+#~ Independent Groups ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+t, p, dof = sm.stats.ttest_ind(x1, x2)
+print(f"t({dof}) = {t:.2f}, p = {p:.2f}\n")
 
+d1, g1 = standardised_cohens_d_hedges_g(x1=x1, x2=x2)
+d2, g2 = standardised_cohens_d_hedges_g(t=t, nobs_x1=nobs_x1, nobs_x2=nobs_x2)
+d3, g3 = standardised_cohens_d_hedges_g(t=t, N=nobs_x1 + nobs_x2)
 
-diff = np.array(a) - np.array(b)
-d_z1 = cohens_d_of_diff(a, b, alt=False)
-d_z2 = cohens_d_of_diff(a, b, alt=True)
-print(f"Cohens d on the difference: {d_z1:.2f} (corrected: {d_z2:.2f})")
+cles = common_language_effect_size(x1=x1,x2=x2)
 
-#~Scenario 3: ANOVA approach ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-#
-dfs = df[['movie_1', 'movie_2']].stack().reset_index()  # stacked
-dfs.columns = ['subject', 'movie', 'rating']
-lm = ols('rating ~ movie', data=dfs).fit()
-result = sm.stats.anova_lm(lm)
+# Test them against the example from the paper
+np.testing.assert_allclose(round(d1, 2), 1.13)
+np.testing.assert_allclose(round(g1, 2), 1.08)
 
-F = result.loc['movie']['F']
-dof_numer = result.loc['movie']['df']
-dof_denom = result.loc['Residual']['df']
-p = result.loc['movie']['PR(>F)']
-print(f"F({dof_numer:.2f}, {dof_denom:.2f}) = {F:.2f}, p = {p:.2f}")
+np.testing.assert_allclose(round(d2, 2), 1.13)
+np.testing.assert_allclose(round(g2, 2), 1.08)
 
-# We need the sums of squares
-SSeffect, SSerror = result['sum_sq']
+np.testing.assert_allclose(round(d3, 2), 1.13)
+np.testing.assert_allclose(round(g3, 2), 1.08)
 
-
-def eta_squared(SSeffect, SSerror):
-    return SSeffect / (SSeffect + SSerror)
-
-
-etasq = eta_squared(SSeffect, SSerror)
-print(f"η^2: {etasq:.2f}")
-
-# Convert cohen's d to R
-d = d_s
-N = dfs.shape[0]
-n1 = dfs.loc[dfs['movie'] == 'movie_1'].shape[0]
-n2 = dfs.loc[dfs['movie'] == 'movie_2'].shape[0]
-rpb = d / np.sqrt(d**2 + ((N**2 - N * 2) / (n1 * n2)))
-# this is the r value, so squaring gives r^2: variance explained
-print(f"rpb: {rpb:.2f}, r^2: {rpb**2:.2f} <--- same as eta squared.")
-
-###
-anova = AnovaRM(data=dfs, subject='subject', within=['movie'], depvar='rating')
-fit = anova.fit()
-res = fit.anova_table
-F = res['F Value'].squeeze()
-dof_num = res['Num DF'].squeeze()
-dof_den = res['Den DF'].squeeze()
-p = res['Pr > F'].squeeze()
-print(f"F({dof_num:.2f}, {dof_den:.2f}) = {F:.2f}, p = {p:.2f}")
-
-print(fit.summary())
+print("Testing standardised_cohens_d() for different inputs:")
+print(f"""Using x1 & x2:\n\td = {d1}\n\tg = {g1}\nUsing t, nobs_x1 & nobs_x2:\n\td = {d2}\n\tg = {g2}\nUsing just t and N\n\td = {d3}\n\tg = {g3}""")
+np.testing.assert_allclose(round(cles, 2), 0.79)
+print(f"Testing the CLES:\n\tCLES = {cles}")
